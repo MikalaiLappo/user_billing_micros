@@ -14,7 +14,6 @@ import (
 )
 
 type UserService struct {
-	repo            UserRepository
 	billingMicroURL string
 }
 
@@ -23,20 +22,10 @@ type UserRepository interface {
 	FindByID(ctx context.Context, id uuid.UUID) (*domain.User, error)
 }
 
-func NewUserService(repo UserRepository, billingUrl string) *UserService {
+func NewUserService(billingUrl string) *UserService {
 	return &UserService{
-		repo:            repo,
 		billingMicroURL: billingUrl,
 	}
-}
-
-func (s *UserService) GetUserByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
-	user, err := s.repo.FindByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
-	return user, nil
 }
 
 func (s *UserService) RunSpeculationThread(ctx context.Context, id uuid.UUID, secFreq uint32) error {
@@ -46,30 +35,39 @@ func (s *UserService) RunSpeculationThread(ctx context.Context, id uuid.UUID, se
 		for {
 			select {
 			case <-ticker.C:
+				// 50/50
 				if boolRand() {
 					// recieve case
 					fmt.Printf("[RunSpeculationThread] making a request\n")
 					data := []byte(fmt.Sprintf(`{"owner_id": "%s", "amount": %d}`, id.String(), 100))
 					r := bytes.NewReader(data)
 
-					_, err := http.Post(s.billingMicroURL+"/recieve", "application/json", r)
+					resp, err := http.Post(s.billingMicroURL+"/recieve", "application/json", r)
 					if err != nil {
 						fmt.Printf("[RunSpeculationThread] failed to recieve balance user_id: %s | %s\n", id.String(), err.Error())
 						continue
 					}
 
+					if resp.StatusCode != http.StatusOK {
+						fmt.Printf("[RunSpeculationThread] billing service coudldn't perform a recieve operation\n")
+					}
+
 					fmt.Printf("[RunSpeculationThread] recieve: OK\n")
 					continue
 				}
-				// recieve pay case
+				// pay case
 				fmt.Printf("[RunSpeculationThread] making a request\n")
 				data := []byte(fmt.Sprintf(`{"owner_id": "%s", "amount": %d}`, id.String(), 100))
 				r := bytes.NewReader(data)
 
-				_, err := http.Post(s.billingMicroURL+"/pay", "application/json", r)
+				resp, err := http.Post(s.billingMicroURL+"/pay", "application/json", r)
 				if err != nil {
 					fmt.Printf("[RunSpeculationThread] failed to pay balance user_id: %s | %s\n", id.String(), err.Error())
 					continue
+				}
+
+				if resp.StatusCode != http.StatusOK {
+					fmt.Printf("[RunSpeculationThread] billing service coudldn't make a pay\n")
 				}
 
 				fmt.Printf("[RunSpeculationThread] pay: OK\n")
@@ -98,10 +96,10 @@ func (s *UserService) CheckBalanceThread(ctx context.Context, id uuid.UUID, secF
 
 				_, err := http.Post(s.billingMicroURL+"/balance", "application/json", r)
 				if err != nil {
-					fmt.Printf("[CheckBalanceThread] failed to retrieve balance user_id: %s | %s", id.String(), err.Error())
+					fmt.Printf("[CheckBalanceThread] failed to retrieve balance user_id: %s | %s\n", id.String(), err.Error())
 					continue
 				}
-				fmt.Printf("[CheckBalanceThread] balance response: OK")
+				fmt.Printf("[CheckBalanceThread] balance response: OK\n")
 
 			case <-quit:
 				ticker.Stop()
